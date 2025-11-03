@@ -1,0 +1,27 @@
+{
+  "name": "connection-onchain",
+  "version": "1.0.0",
+  "description": "",
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "npx hardhat test",
+    "compile": "npx hardhat compile",
+    "deploy-local": "node scripts/deploy.js",
+    "copy-abi": "node scripts/copy-abi.js",
+    "build-contract": "npm run compile && npm run copy-abi"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-chai-matchers": "^1.0.6",
+    "@nomicfoundation/hardhat-network-helpers": "^1.1.2",
+    "@nomiclabs/hardhat-ethers": "^2.2.3",
+    "@openzeppelin/contracts": "^5.4.0",
+    "hardhat": "^2.26.5"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "ethers": "^5.8.0"
+  }
+}
