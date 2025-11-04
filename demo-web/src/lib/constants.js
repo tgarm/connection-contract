@@ -2,24 +2,36 @@
 
 import RegistryJson from '../config/abi/ConnectionUserRegistry.json';
 
-// Ethers.js v6 需要的 CT Token 极简 ABI (只保留 balanceOf)
+// =================================================================
+// ABI & 合约地址 (从前端 .env 读取)
+// =================================================================
 export const CT_TOKEN_ABI = [
     {"inputs":[{"internalType":"address","name":"account","type":"address"}],"name":"balanceOf","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"}
 ];
-
-// Ethers.js v6 需要的 Registry 合约 ABI
 export const REGISTRY_ABI = RegistryJson.abi; 
 
-// Hardhat/部署 配置
 export const REGISTRY_ADDRESS = process.env.VUE_APP_REGISTRY_ADDRESS; 
 export const CT_TOKEN_ADDRESS = process.env.VUE_APP_CT_TOKEN_ADDRESS;
-export const DEPLOYER_PRIVATE_KEY = process.env.VUE_APP_DEPLOYER_PRIVATE_KEY;
 
-// Hardhat RPC 配置
-export const HARDHAT_CHAIN_ID = 31337; 
-export const HARDHAT_RPC_URL = 'http://127.0.0.1:8545';
-export const HARDHAT_NETWORK_NAME = 'Hardhat Localhost';
+// =================================================================
+// 多网络配置
+// =================================================================
+export const NETWORKS = {
+    'baseSepolia': {
+        name: 'Base Sepolia Testnet',
+        chainId: 84532,
+        rpcUrl: 'https://sepolia.base.org', // 公共 RPC
+        nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+        blockExplorerUrl: 'https://sepolia-explorer.base.org',
+    },
+    'ai3': {
+        name: 'Autonomys EVM Mainnet',
+        chainId: 870,
+        rpcUrl: 'https://auto-evm.mainnet.autonomys.xyz/ws',
+        nativeCurrency: { name: 'AI3', symbol: 'AI3', decimals: 18 },
+        blockExplorerUrl: 'https://explorer.auto-evm.mainnet.autonomys.xyz/',
+    },
+};
 
-// Hardhat RPC 方法
-export const MINE_BLOCK_METHOD = 'evm_mine'; 
-export const INCREASE_TIME_METHOD = 'evm_increaseTime';
+// 默认网络/当前部署网络 (从前端 .env 读取)
+export const DEFAULT_NETWORK_KEY = process.env.VUE_APP_NETWORK_KEY || 'baseSepolia';
