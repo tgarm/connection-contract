@@ -188,6 +188,42 @@ export const registerUser = async (username) => {
 
 
 // =================================================================
+// 合约实例创建函数
+// =================================================================
+
+/**
+ * @dev 获取只读 Provider (ethers.BrowserProvider)
+ */
+export const getProvider = () => 
+    typeof window.ethereum !== 'undefined' ? new ethers.BrowserProvider(window.ethereum) : null;
+
+/**
+ * @dev 获取只读 Registry 合约实例
+ * @returns ethers.Contract | null
+ */
+export const registry = () => {
+    const p = getProvider();
+    return p ? new ethers.Contract(REGISTRY_ADDRESS, REGISTRY_ABI, p) : null;
+};
+
+/**
+ * @dev 获取带 Signer 的 Registry 合约实例 (用于发送交易)
+ * @returns ethers.Contract | null
+ */
+export const getRegistryWithSigner = async () => {
+    const p = getProvider();
+    if (!p) return null;
+    
+    try {
+        const signer = await p.getSigner();
+        return new ethers.Contract(REGISTRY_ADDRESS, REGISTRY_ABI, signer);
+    } catch (e) {
+        logMessage('无法获取 Signer: 请确保钱包已连接并授权。', 'error');
+        return null;
+    }
+};
+
+// =================================================================
 // 监听事件
 // =================================================================
 export const setupEventListeners = () => {

@@ -1,6 +1,6 @@
 <template>
-  <div class="user-registration">
-    <h2>Connection 用户注册 & 空投领取</h2>
+  <div class="connection-app">
+    <h2>Connection 链上身份与社交仪表板</h2>
 
     <WalletConnectPanel 
         :isRegistered="isRegistered"
@@ -10,87 +10,105 @@
     />
 
     <hr>
-
-    <div class="section">
-      <h3>用户查询</h3>
-      
-      <div class="input-group query-group">
-        <input v-model="queryUsername" placeholder="输入用户名查询地址" />
-        <button @click="queryUsernameAddr" :disabled="!walletAddress || querying">查用户名</button>
-      </div>
-      <p v-if="queryUsernameResult" class="query-result">
-        <strong>{{ queryUsername }}</strong> → {{ queryUsernameResult || '未注册' }}
-      </p>
-
-      <div class="input-group query-group" style="margin-top: 15px;">
-        <input v-model="queryAddress" placeholder="输入地址 (0x...) 查询用户名" />
-        <button @click="queryAddressUsername" :disabled="!walletAddress || querying">查地址</button>
-      </div>
-      <p v-if="queryAddressResult" class="query-result">
-        <strong>{{ shortQueryAddr }}</strong> → {{ queryAddressResult || '未注册' }}
-      </p>
-    </div>
-
-    <div class="section" v-if="walletAddress && !isRegistered">
-      <h3>注册新用户</h3>
-      <div class="input-group">
-        <label for="username">用户名 (3-32 字符)</label>
-        <input id="username" v-model="username" placeholder="输入用户名" :disabled="registering" />
-      </div>
-
-      <p class="airdrop-info" v-if="estimatedAirdrop > 0">
-        🎉 成功注册可获得约 <strong>{{ estimatedAirdrop }} CT</strong> 空投！
-      </p>
-      <p class="airdrop-info" v-else>
-        空投周期数据加载中，或当前空投周期已结束。
-      </p>
-
-      <button @click="handleRegister" :disabled="!canRegister" class="register-button">
-        {{ registering ? '注册中...' : `注册并领空投 (0.01 ${nativeSymbol})` }}
-      </button>
-    </div>
-
-    <div class="section" v-if="isRegistered">
-      <h3>已注册信息</h3>
-      <p>注册时间: {{ formatTime(registrationTime) }}</p>
-
-      <div class="input-group update-group">
-        <label for="new-username">修改用户名 ({{ adminModFee }} {{ nativeSymbol }})</label>
-        <input 
-          id="new-username" 
-          v-model="newUsername" 
-          placeholder="输入新用户名" 
-          :disabled="updating" 
-        />
-        <button @click="handleUpdateUsername" :disabled="!canUpdate" class="update-button">
-          {{ updating ? '修改中...' : '确认修改' }}
-        </button>
-      </div>
-    </div>
     
-    <OwnerManagementPanel 
-        v-if="isOwner || isFeeReceiver"
-        :isOwner="isOwner"
-        :isFeeReceiver="isFeeReceiver"
+    <el-tabs v-model="activeTab" type="border-card" class="main-tabs">
         
-        :contractNativeBal="contractNativeBal"
-        :contractCTBal="contractCTBal"
-        :distributedCT="distributedCT"
-        :remainingCT="remainingCT"
-        :totalRegisteredUsers="totalRegisteredUsers"
-        
-        :initialRegFee="adminRegFee"
-        :initialModFee="adminModFee"
-        :initialFeeReceiver="adminFeeReceiver"
-        :initialAirdropAmount="adminAirdropAmount"
-        
-        @withdrawFee="withdrawFee"
-        @setFees="setFees"
-        @setFeeReceiver="setFeeReceiver"
-        @startAirdropCycle="startAirdropCycle"
-    />
+        <el-tab-pane label="👤 账户与注册" name="account">
+            
+            <div class="app-section">
+                <h3>用户查询</h3>
+                
+                <div class="input-group query-group">
+                    <input v-model="queryUsername" placeholder="输入用户名查询地址" />
+                    <button @click="queryUsernameAddr" :disabled="!walletAddress || querying">查用户名</button>
+                </div>
+                <p v-if="queryUsernameResult" class="query-result">
+                    <strong>{{ queryUsername }}</strong> → {{ queryUsernameResult || '未注册' }}
+                </p>
 
-    <LogAndStatus />
+                <div class="input-group query-group" style="margin-top: 15px;">
+                    <input v-model="queryAddress" placeholder="输入地址 (0x...) 查询用户名" />
+                    <button @click="queryAddressUsername" :disabled="!walletAddress || querying">查地址</button>
+                </div>
+                <p v-if="queryAddressResult" class="query-result">
+                    <strong>{{ shortQueryAddr }}</strong> → {{ queryAddressResult || '未注册' }}
+                </p>
+            </div>
+
+            <div class="app-section" v-if="walletAddress && !isRegistered">
+                <h3>注册新用户</h3>
+                <div class="input-group">
+                    <label for="username">用户名 (3-32 字符)</label>
+                    <input id="username" v-model="username" placeholder="输入用户名" :disabled="registering" />
+                </div>
+
+                <p class="airdrop-info" v-if="estimatedAirdrop > 0">
+                    🎉 成功注册可获得约 <strong>{{ estimatedAirdrop }} CT</strong> 空投！
+                </p>
+                <p class="airdrop-info" v-else>
+                    空投周期数据加载中，或当前空投周期已结束。
+                </p>
+
+                <button @click="handleRegister" :disabled="!canRegister" class="register-button">
+                    {{ registering ? '注册中...' : `注册并领空投 (${adminRegFee} ${nativeSymbol})` }}
+                </button>
+            </div>
+
+            <div class="app-section" v-if="isRegistered">
+                <h3>已注册信息</h3>
+                <p>注册时间: {{ formatTime(registrationTime) }}</p>
+
+                <div class="input-group update-group">
+                    <label for="new-username">修改用户名 ({{ adminModFee }} {{ nativeSymbol }})</label>
+                    <input 
+                    id="new-username" 
+                    v-model="newUsername" 
+                    placeholder="输入新用户名" 
+                    :disabled="updating" 
+                    />
+                    <button @click="handleUpdateUsername" :disabled="!canUpdate" class="update-button">
+                    {{ updating ? '修改中...' : '确认修改' }}
+                    </button>
+                </div>
+            </div>
+        </el-tab-pane>
+        
+        <el-tab-pane label="💬 消息墙" name="messages">
+            <MessageBoard 
+                :isRegistered="isRegistered"
+                :loadAllData="loadAllData"
+                :addressUsernameMap="addressUsernameMap"
+            />
+        </el-tab-pane>
+
+        <el-tab-pane label="⚙️ 管理面板" name="admin" v-if="isOwner || isFeeReceiver">
+             <OwnerManagementPanel 
+                :isOwner="isOwner"
+                :isFeeReceiver="isFeeReceiver"
+                
+                :contractNativeBal="contractNativeBal"
+                :contractCTBal="contractCTBal"
+                :distributedCT="distributedCT"
+                :remainingCT="remainingCT"
+                :totalRegisteredUsers="totalRegisteredUsers"
+                
+                :initialRegFee="adminRegFee"
+                :initialModFee="adminModFee"
+                :initialFeeReceiver="adminFeeReceiver"
+                :initialAirdropAmount="adminAirdropAmount"
+                
+                @withdrawFee="withdrawFee"
+                @setFees="setFees"
+                @setFeeReceiver="setFeeReceiver"
+                @startAirdropCycle="startAirdropCycle"
+            />
+        </el-tab-pane>
+
+        <el-tab-pane label="📄 日志与状态" name="logs">
+            <LogAndStatus />
+        </el-tab-pane>
+
+    </el-tabs>
   </div>
 </template>
 
@@ -102,19 +120,24 @@ import { ethers } from 'ethers';
 import WalletConnectPanel from './WalletConnectPanel.vue';
 import OwnerManagementPanel from './OwnerManagementPanel.vue';
 import LogAndStatus from './LogAndStatus.vue';
+import MessageBoard from './MessageBoard.vue'; 
 
 // --- 导入 lib 模块 ---
 import {
   walletAddress, currentNetworkKey,
   connectWallet, registerUser, setupEventListeners,
-  fetchBalances
-} from '../lib/wallet-and-rpc';
+  fetchBalances,
+  registry, getRegistryWithSigner,
+  getProvider
+} from '../lib/wallet-and-rpc'; // 假设 registerUser 现在处理了交易发送和等待
 import { logMessage } from '../lib/log-system';
-import { NETWORKS, REGISTRY_ADDRESS, REGISTRY_ABI, CT_TOKEN_ADDRESS, CT_TOKEN_ABI } from '../lib/constants';
+import { NETWORKS, REGISTRY_ADDRESS, CT_TOKEN_ADDRESS, CT_TOKEN_ABI } from '../lib/constants';
 
 
 // ==================== 状态 & 常量 ====================
 const FRONTEND_AIRDROP_RATIO_BP = 1000; // 10%
+
+const activeTab = ref('account'); // 默认显示账户 Tab
 
 const username = ref('');
 const newUsername = ref(''); 
@@ -133,18 +156,19 @@ const registrationTime = ref(0);
 const isFeeReceiver = ref(false);
 const isOwner = ref(false);
 
-// Owner 管理数据 (从合约加载，并传递给子组件)
+// Owner 管理数据 
 const adminRegFee = ref(0.01);
 const adminModFee = ref(0.01);
 const adminFeeReceiver = ref('');
-const adminAirdropAmount = ref(10000); // 假定一个初始值
+const adminAirdropAmount = ref(10000); 
 
-// 合约实时数据 (从合约加载)
+// 合约实时数据
 const contractNativeBal = ref('0');
 const contractCTBal = ref('0');
 const distributedCT = ref('0');
 const remainingCT = ref('0');
 const totalRegisteredUsers = ref(0);
+const addressUsernameMap = ref({}); // 用户名缓存
 
 
 // ==================== 计算属性 ===================
@@ -190,24 +214,12 @@ const formatTime = (timestamp) => {
   });
 };
 
-const provider = () => walletAddress.value ? new ethers.BrowserProvider(window.ethereum) : null;
-const registry = () => provider() ? new ethers.Contract(REGISTRY_ADDRESS, REGISTRY_ABI, provider()) : null;
-
-const getSigner = async () => {
-  const p = provider();
-  return p ? await p.getSigner() : null;
-};
-
-const getRegistryWithSigner = async () => {
-  const signer = await getSigner();
-  return signer ? new ethers.Contract(REGISTRY_ADDRESS, REGISTRY_ABI, signer) : null;
-};
 
 
 // ==================== 数据加载函数 ===================
 
 const loadAllData = async () => {
-  if (!walletAddress.value || !provider()) return;
+  if (!walletAddress.value || !getProvider()) return;
   logMessage('正在刷新所有链上数据...', 'info');
 
   await Promise.allSettled([
@@ -231,6 +243,9 @@ const loadUserProfile = async () => {
       registeredUsername.value = name;
       const profile = await reg.users(walletAddress.value);
       registrationTime.value = Number(profile.registrationTime);
+      
+      // 填充当前用户的用户名到 map
+      addressUsernameMap.value[walletAddress.value.toLowerCase()] = name;
     } else {
       registeredUsername.value = '';
       registrationTime.value = 0;
@@ -257,23 +272,24 @@ const loadUserProfile = async () => {
 
 const loadContractInfo = async () => {
   try {
-    const p = provider();
+    const p = getProvider();
     const ct = new ethers.Contract(CT_TOKEN_ADDRESS, CT_TOKEN_ABI, p);
     const reg = registry();
 
-    const [nativeBal, ctBal, dist, total, totalUsers] = await Promise.all([
+    // 关键修正：totalRegisteredUsers 变为 totalUsers
+    const [nativeBal, ctBal, dist, total, totalUsersCount] = await Promise.all([
       p.getBalance(REGISTRY_ADDRESS),
       ct.balanceOf(REGISTRY_ADDRESS),
       reg.distributedCT(),
       reg.cycleTotalCT(),
-      reg.totalUsers()
+      reg.totalUsers() // ✅ 匹配合约 public totalUsers()
     ]);
 
     contractNativeBal.value = ethers.formatEther(nativeBal);
     contractCTBal.value = ethers.formatEther(ctBal);
     distributedCT.value = ethers.formatEther(dist);
     remainingCT.value = ethers.formatEther(total > dist ? total - dist : 0n);
-    totalRegisteredUsers.value = Number(totalUsers); 
+    totalRegisteredUsers.value = Number(totalUsersCount); 
   } catch (e) {
     logMessage(`合约数据加载失败: ${e.message}`, 'error');
   }
@@ -314,7 +330,9 @@ const queryAddressUsername = async () => {
 
 const handleRegister = async () => {
   registering.value = true;
-  await registerUser(username.value); // 假设 lib/wallet-and-rpc.js 负责交易发送和等待
+  // 假设 registerUser 在 lib/wallet-and-rpc.js 中调用 reg.registerUsername
+  // 并且使用 adminRegFee.value 作为 value
+  await registerUser(username.value, adminRegFee.value); 
   username.value = '';
   registering.value = false;
   await loadAllData(); 
@@ -329,9 +347,9 @@ const handleUpdateUsername = async () => {
     try {
         logMessage(`正在将用户名从 "${registeredUsername.value}" 修改为 "${newUsername.value}"...`, 'info');
         
-        // 使用动态加载的 adminModFee
         const modFeeValue = ethers.parseEther(adminModFee.value.toString()); 
 
+        // 关键修正：updateUsername 变为 modifyUsername
         const tx = await reg.modifyUsername(newUsername.value, { value: modFeeValue });
         
         await tx.wait();
@@ -355,7 +373,6 @@ const handleUpdateUsername = async () => {
 const setFees = async (regFee, modFee) => {
   const reg = await getRegistryWithSigner();
   try {
-    // 确保将 Number 转换为 String 再 parseEther
     await (await reg.setRegistrationFee(ethers.parseEther(regFee.toString()))).wait();
     await (await reg.setModificationFee(ethers.parseEther(modFee.toString()))).wait();
     logMessage('费用更新成功', 'success');
@@ -379,7 +396,6 @@ const startAirdropCycle = async (amount) => {
   if (amount <= 0) return logMessage('无效数量', 'error');
   const reg = await getRegistryWithSigner();
   try {
-    // 确保调用 .wait() 并等待确认
     await (await reg.startNewAirdropCycle(ethers.parseEther(amount.toString()))).wait(); 
     logMessage(`新周期开启！${amount} CT`, 'success');
     await loadAllData(); 
@@ -399,7 +415,6 @@ const withdrawFee = async () => {
 // ==================== 生命周期 ===================
 onMounted(() => {
   setupEventListeners();
-  // 连接钱包成功后会自动触发 watch 
   connectWallet();
 });
 
@@ -410,32 +425,48 @@ watch(walletAddress, () => {
 watch(currentNetworkKey, () => {
   if (walletAddress.value) loadAllData();
 });
+
+// 自动切换到管理面板 Tab
+watch([isOwner, isFeeReceiver], ([isO, isR]) => {
+    if ((isO || isR) && activeTab.value === 'account') {
+        activeTab.value = 'admin';
+    }
+});
 </script>
 
 <style scoped>
-.user-registration {
+.connection-app {
     padding: 20px;
     border: 1px solid #ccc;
     border-radius: 8px;
-    max-width: 600px;
+    max-width: 650px; /* 略微放宽以适应 Element Plus 样式 */
     margin: 40px auto;
     font-family: sans-serif;
 }
+h2 {
+    text-align: center;
+    color: #303133;
+    margin-bottom: 20px;
+}
 hr {
-    margin: 20px 0;
+    margin: 15px 0;
     border: none;
     border-top: 1px solid #eee;
 }
-.section {
-    border: 1px solid #eee;
-    padding: 15px;
-    border-radius: 6px;
-    margin-bottom: 20px;
+/* 新增的 .app-section 替换旧的 .section 样式 */
+.app-section {
+    padding: 10px 0;
+    margin-bottom: 15px;
 }
 .input-group {
     margin-bottom: 15px;
     display: flex;
     flex-direction: column;
+}
+/* Element Plus Tabs 样式 */
+.main-tabs {
+    --el-tabs-header-height: 40px;
+    margin-top: 20px;
 }
 /* 查询面板组样式 */
 .query-group {
@@ -445,6 +476,9 @@ hr {
 }
 .query-group input {
     flex-grow: 1;
+    padding: 10px;
+    border: 1px solid #DCDFE6;
+    border-radius: 4px;
 }
 .query-group button {
     width: auto;
@@ -465,6 +499,7 @@ hr {
     border-radius: 4px;
     cursor: pointer;
     width: 100%;
+    transition: background-color 0.2s;
 }
 .update-group {
     margin-top: 15px;
@@ -489,5 +524,4 @@ hr {
 .airdrop-info strong {
     color: #D36A18;
 }
-
 </style>

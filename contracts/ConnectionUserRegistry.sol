@@ -39,6 +39,22 @@ contract ConnectionUserRegistry is Ownable {
     uint256 public constant MIN_USERNAME_LENGTH = 3;
     uint256 public constant MAX_USERNAME_LENGTH = 32;
 
+    // ============== 消息结构 ==============
+    struct Message {
+        uint256 id;
+        address author;
+        string content;
+        uint256 timestamp;
+        uint256 likes; // 点赞数
+    }
+
+    // ============== 消息存储 ==============
+    Message[] public allMessages;
+    mapping(address => uint256[]) public userMessages; // 用户发布的消息ID列表
+    // 跟踪点赞情况，防止重复点赞: messageId => userAddress => hasLiked
+    mapping(uint256 => mapping(address => bool)) public userLikes; 
+
+
     // ============== 事件 ==============
     event UsernameRegistered(address indexed user, string username, uint256 fee);
     event UsernameModified(address indexed user, string oldName, string newName, uint256 fee);
@@ -46,6 +62,10 @@ contract ConnectionUserRegistry is Ownable {
     event AirdropExecuted(address indexed user, uint256 ai3Paid, uint256 ctAmount);
     event FeeReceiverChanged(address indexed oldAddr, address indexed newAddr);
     event FeeWithdrawn(address indexed receiver, uint256 amount);
+
+    event MessagePosted(uint256 indexed id, address indexed author, string content);
+    event MessageLiked(uint256 indexed id, address indexed user, uint256 newLikes);
+
 
     // ============== 构造函数 ==============
     constructor(
@@ -201,4 +221,112 @@ contract ConnectionUserRegistry is Ownable {
 
         emit AirdropExecuted(msg.sender, ai3Paid, shouldRelease);
     }
+
+    // ============== 消息操作 API ==============
+    
+    /** * @dev 用户发布消息。必须先注册。 
+     */
+    function postMessage(string memory content) external {
+        // 要求用户必须先注册
+        require(users[msg.sender].registrationTime != 0, "not registered");
+        require(bytes(content).length > 0 && bytes(content).length <= 280, "content length invalid"); // 280字符限制
+
+        uint256 messageId = allMessages.length;
+        
+        // 创建新消息
+        Message memory newMessage = Message({
+            id: messageId,
+            author: msg.sender,
+            content: content,
+            timestamp: block.timestamp,
+            likes: 0
+        });
+
+        allMessages.push(newMessage);
+        userMessages[msg.sender].push(messageId);
+
+        // 每发布一条消息，也执行空投（激励内容产出）
+        _executeAirdrop(0); // 假设消息发布无需费用，但可以触发空投
+
+        emit MessagePosted(messageId, msg.sender, content);
+    }
+    
+    /** * @dev 点赞一条消息。用户不能给自己点赞，也不能重复点赞。
+     */
+    function likeMessage(uint256 messageId) external {
+        // 确保消息存在
+        require(messageId < allMessages.length, "message not found");
+        // 不能给自己点赞
+        require(allMessages[messageId].author != msg.sender, "cannot like own message");
+        // 不能重复点赞
+        require(!userLikes[messageId][msg.sender], "already liked");
+
+        // 更新状态
+        userLikes[messageId][msg.sender] = true;
+        allMessages[messageId].likes++;
+
+        // 点赞可以触发空投
+        _executeAirdrop(0); 
+        
+        emit MessageLiked(messageId, msg.sender, allMessages[messageId].likes);
+    }
+
+    // ============== 前端查询 API ==============
+
+    /** @dev 查询消息总数 */
+    function messageCount() external view returns (uint256) {
+        return allMessages.length;
+    }
+
+    /** @dev 获取特定用户的消息ID列表 */
+    function getUserMessageIds(address user) external view returns (uint256[] memory) {
+        return userMessages[user];
+    }
+    
+    /** @dev 获取单条消息详情 */
+    function getMessage(uint256 messageId) external view returns (Message memory) {
+        require(messageId < allMessages.length, "message not found");
+        return allMessages[messageId];
+    }
+    
+    /** @dev 检查用户是否点赞了某条消息 */
+    function hasLiked(uint256 messageId, address user) external view returns (bool) {
+        return userLikes[messageId][user];
+    }
+    
+    /** * @dev 获取最新 N 条消息 (从后往前查询)
+     */
+    function getLatestMessages(uint256 count) 
+        external view 
+        returns (Message[] memory) 
+    {
+        uint256 total = allMessages.length;
+        if (total == 0) return new Message[](0);
+        
+        uint256 actualCount = count;
+        uint256 startIndex;
+        
+        if (count > total) {
+            actualCount = total;
+            startIndex = 0;
+        } else {
+            startIndex = total - count;
+        }
+        
+        Message[] memory messages = new Message[](actualCount);
+        for (uint256 i = 0; i < actualCount; i++) {
+            messages[i] = allMessages[startIndex + i];
+        }
+        
+        return messages;
+    }
+    
+    /** * @dev 获取最热消息 (需要链下服务辅助排序，这里提供一个简单的全量查询，前端进行排序)
+     * 实际生产环境应使用 subgraph 或自定义索引服务。
+     */
+    function getAllMessageIds() external view returns (uint256) {
+        // 🚨 警告：全量数据传输Gas成本高，生产环境应避免。这里仅为Demo提供。
+        return allMessages.length;
+    }
+
 }
