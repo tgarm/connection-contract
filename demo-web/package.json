@@ -26,7 +26,8 @@
   "eslintConfig": {
     "root": true,
     "env": {
-      "node": true
+      "node": true,
+      "vue/setup-compiler-macros": true  
     },
     "extends": [
       "plugin:vue/vue3-essential",
@@ -35,7 +36,11 @@
     "parserOptions": {
       "parser": "@babel/eslint-parser"
     },
-    "rules": {}
+    "rules": {
+        "no-irregular-whitespace": "error",
+        "vue/no-unused-vars": "off", 
+        "no-unused-vars": "off"
+    }
   },
   "browserslist": [
     "> 1%",
