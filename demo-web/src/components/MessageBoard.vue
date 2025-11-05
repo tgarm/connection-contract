@@ -1,6 +1,7 @@
 <template>
   <div class="message-board section">
     <h3>📢 消息墙</h3>
+    <!-- ... template content ... -->
     <p v-if="!isRegistered" class="info-alert">请先注册用户名，才能发布和点赞消息。</p>
     
     <div v-if="isRegistered" class="post-message-area">
@@ -53,7 +54,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue';
 import { logMessage } from '../lib/log-system';
-import { getRegistryWithSigner, registry, walletAddress } from '../lib/wallet-and-rpc';
+import { registry, walletAddress, getRegistryWithSigner, currentNetworkKey } from '../lib/wallet-and-rpc';
 
 const props = defineProps({
     isRegistered: Boolean,
@@ -83,7 +84,7 @@ const formatTime = (timestamp) => {
 
 // 增强消息数据，加入前端需要的状态
 const enhanceMessage = async (msg) => {
-    const reg = registry();
+    const reg = registry(currentNetworkKey.value);
     const user = walletAddress.value;
     const authorName = props.addressUsernameMap[msg.author] || await reg.getUsernameByAddress(msg.author);
     
@@ -112,10 +113,18 @@ const enhanceMessage = async (msg) => {
 // ==================== 交互函数 ====================
 
 const handlePostMessage = async () => {
-    if (!canPost.value) return;
+    if (!canPost.value){
+        logMessage('不能发布消息');
+        return;
+    } 
     posting.value = true;
-    const reg = await getRegistryWithSigner();
+    const reg = await getRegistryWithSigner(currentNetworkKey.value);
     
+    if (!reg) {
+        logMessage('❌ 发布失败：无法获取签名者。请确保您的钱包已连接。', 'error');
+        posting.value = false;
+        return;
+    }
     try {
         logMessage(`正在发布消息: ${newMessageContent.value.substring(0, 20)}...`, 'info');
         
@@ -129,8 +138,9 @@ const handlePostMessage = async () => {
         
     } catch (error) {
         logMessage(`❌ 消息发布失败: ${error.reason || error.message}`, 'error');
+    } finally {
+        posting.value = false;
     }
-    posting.value = false;
 };
 
 const handleLike = async (messageId) => {
@@ -144,7 +154,7 @@ const handleLike = async (messageId) => {
     }
 
     liking.value = true;
-    const reg = await getRegistryWithSigner();
+    const reg = await getRegistryWithSigner(currentNetworkKey.value);
     try {
         const tx = await reg.likeMessage(messageId);
         await tx.wait();
@@ -169,7 +179,7 @@ const handleLike = async (messageId) => {
 const fetchMessagesData = async (messageIds) => {
     if (!messageIds || messageIds.length === 0) return [];
     
-    const reg = registry();
+    const reg = registry(currentNetworkKey.value);
     const messagePromises = messageIds.map(id => reg.getMessage(id));
     const rawMessages = await Promise.all(messagePromises);
     
@@ -180,18 +190,19 @@ const fetchMessagesData = async (messageIds) => {
 
 // 获取最新消息 (最多 20 条)
 const fetchLatestMessages = async () => {
-    if (!registry()) return;
+    if (!registry(currentNetworkKey.value)) return;
     filterType.value = 'latest';
     loading.value = true;
     displayedMessages.value = [];
     try {
-        const latestMsgs = await registry().getLatestMessages(20); // 假设获取最新的 20 条
+        const latestMsgs = await registry(currentNetworkKey.value).getLatestMessages(20); // 假设获取最新的 20 条
         
+        logMessage(`获取到 ${latestMsgs.length} 条最新消息`, 'info');
         // 由于合约返回的是 Message[] 结构，可以直接处理
         const enhanced = await Promise.all(latestMsgs.map(msg => enhanceMessage(msg)));
         
-        // 合约已经返回最新的，不需要排序
-        displayedMessages.value = enhanced.reverse(); // 从新到旧显示
+        // 按时间戳从新到旧排序
+        displayedMessages.value = enhanced.sort((a, b) => b.timestamp - a.timestamp);
         
     } catch (e) {
         logMessage(`获取最新消息失败: ${e.message}`, 'error');
@@ -206,9 +217,11 @@ const fetchUserMessages = async () => {
     loading.value = true;
     displayedMessages.value = [];
     try {
-        const userMsgIds = await registry().getUserMessageIds(walletAddress.value);
+        const userMsgIds = await registry(currentNetworkKey.value).getUserMessageIds(walletAddress.value);
+        logMessage(`获取到 ${userMsgIds.length} 条我的消息`, 'info');
         const enhanced = await fetchMessagesData(userMsgIds);
-        displayedMessages.value = enhanced.reverse();
+        // 按时间戳从新到旧排序
+        displayedMessages.value = enhanced.sort((a, b) => b.timestamp - a.timestamp);
     } catch (e) {
         logMessage(`获取我的消息失败: ${e.message}`, 'error');
     }
@@ -217,17 +230,18 @@ const fetchUserMessages = async () => {
 
 // 获取最热消息 (需要额外的查询和前端排序)
 const fetchHotMessages = async () => {
-    if (!registry()) return;
+    if (!registry(currentNetworkKey.value)) return;
     filterType.value = 'hot';
     loading.value = true;
     displayedMessages.value = [];
     try {
         // 🚨 警告：这是Demo方法。实际生产环境应使用 Subgraph 或索引服务查询。
-        const messageCount = await registry().messageCount();
+        const messageCount = await registry(currentNetworkKey.value).messageCount();
         const ids = Array.from({length: Number(messageCount)}, (_, i) => i);
+        logMessage(`开始获取全部 ${ids.length} 条消息用于排序...`, 'info');
         
         const allMessages = await fetchMessagesData(ids);
-        
+        logMessage(`已获取全部消息，正在按点赞数排序...`, 'info');
         // 前端排序：按点赞数从高到低
         displayedMessages.value = allMessages.sort((a, b) => b.likes - a.likes);
 

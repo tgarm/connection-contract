@@ -4,7 +4,7 @@ import { ref } from 'vue';
 import { ethers } from 'ethers';
 import { logMessage } from './log-system';
 import { 
-    REGISTRY_ADDRESS, CT_TOKEN_ADDRESS, REGISTRY_ABI, CT_TOKEN_ABI,
+    REGISTRY_ABI, CT_TOKEN_ABI,
     NETWORKS, DEFAULT_NETWORK_KEY, getContractAddresses
 } from './constants';
 
@@ -204,10 +204,12 @@ export const getProvider = () =>
  * @dev 获取只读 Registry 合约实例
  * @returns ethers.Contract | null
  */
-export const registry = (networkKey) => {
+export const registry = (networkKey = currentNetworkKey.value) => {
     const p = getProvider();
     const addresses = getContractAddresses(networkKey);
-    if (!p || !addresses) return null;
+    if (!p || !addresses) {
+        return null;
+    }
     return new ethers.Contract(addresses.registryAddress, REGISTRY_ABI, p);
 };
 
@@ -215,7 +217,7 @@ export const registry = (networkKey) => {
  * @dev 获取带 Signer 的 Registry 合约实例 (用于发送交易)
  * @returns ethers.Contract | null
  */
-export const getRegistryWithSigner = async (networkKey) => {
+export const getRegistryWithSigner = async (networkKey = currentNetworkKey.value) => {
     const p = getProvider();
     const addresses = getContractAddresses(networkKey);
     if (!p || !addresses) {
