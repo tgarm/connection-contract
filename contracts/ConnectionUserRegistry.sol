@@ -14,6 +14,7 @@ contract ConnectionUserRegistry is Ownable {
     struct UserProfile {
         bytes32 usernameHash;
         uint256 registrationTime;
+        uint256 commentFee;
     }
 
     mapping(address => UserProfile) public users;
@@ -25,15 +26,20 @@ contract ConnectionUserRegistry is Ownable {
     ConnectionToken public immutable ctToken;
     uint256 public registrationFee;
     uint256 public modificationFee;
+    uint256 public defaultCommentFee;
     address public feeReceiver;                     // 可随时更改
 
     // ============== 线性空投（4 年周期） ==============
+    struct AirdropCycle {
+        uint256 cycleStartTime;
+        uint256 cycleEndTime;
+        uint256 cycleTotalCT;
+        uint256 distributedCT;
+        uint256 lastAirdropTS;
+    }
+    enum AirdropPool { User, Content }
     uint256 public constant AIRDROP_CYCLE_DURATION = 126144000; // ~4 years
-    uint256 public cycleStartTime;
-    uint256 public cycleEndTime;
-    uint256 public cycleTotalCT;        // 本周期空投总额
-    uint256 public distributedCT;       // 已分发
-    uint256 public lastAirdropTS;       // 上次执行时间戳
+    mapping(AirdropPool => AirdropCycle) public airdropCycles;
 
     // ============== 用户名长度 ==============
     uint256 public constant MIN_USERNAME_LENGTH = 3;
@@ -45,25 +51,42 @@ contract ConnectionUserRegistry is Ownable {
         address author;
         string content;
         uint256 timestamp;
-        uint256 likes; // 点赞数
+        uint256 likes;
+    }
+
+    struct Comment {
+        uint256 id;
+        address author;
+        string content;
+        uint256 timestamp;
+        uint256 likes;
+        uint256 messageId;
+        uint256 parentCommentId; // 0 for a direct comment on a message
     }
 
     // ============== 消息存储 ==============
     Message[] public allMessages;
+    Comment[] public allComments;
     mapping(address => uint256[]) public userMessages; // 用户发布的消息ID列表
+    mapping(uint256 => uint256[]) public messageComments; // messageId => top-level commentIds
+    mapping(uint256 => uint256[]) public commentReplies; // commentId => reply commentIds
     // 跟踪点赞情况，防止重复点赞: messageId => userAddress => hasLiked
     mapping(uint256 => mapping(address => bool)) public userLikes; 
+    // commentId => userAddress => hasLiked
+    mapping(uint256 => mapping(address => bool)) public userCommentLikes;
 
 
     // ============== 事件 ==============
     event UsernameRegistered(address indexed user, string username, uint256 fee);
     event UsernameModified(address indexed user, string oldName, string newName, uint256 fee);
-    event AirdropCycleStarted(uint256 start, uint256 end, uint256 totalCT);
+    event AirdropCycleStarted(AirdropPool pool, uint256 start, uint256 end, uint256 totalCT);
+    event UserCommentFeeSet(address indexed user, uint256 newFee);
     event AirdropExecuted(address indexed user, uint256 ai3Paid, uint256 ctAmount);
     event FeeReceiverChanged(address indexed oldAddr, address indexed newAddr);
     event FeeWithdrawn(address indexed receiver, uint256 amount);
 
     event MessagePosted(uint256 indexed id, address indexed author, string content);
+    event CommentPosted(uint256 indexed id, address indexed author, uint256 indexed messageId, uint256 parentId, string content);
     event MessageLiked(uint256 indexed id, address indexed user, uint256 newLikes);
 
 
@@ -71,12 +94,14 @@ contract ConnectionUserRegistry is Ownable {
     constructor(
         address _ctToken,
         uint256 _regFee,
-        uint256 _modFee
+        uint256 _modFee,
+        uint256 _defaultCommentFee
     ) Ownable(msg.sender) {
         ctToken = ConnectionToken(_ctToken);
         registrationFee = _regFee;
         modificationFee = _modFee;
-        feeReceiver = msg.sender;                 // 默认部署者
+        defaultCommentFee = _defaultCommentFee;
+        feeReceiver = msg.sender;
     }
 
     // ============== Owner 管理 ==============
@@ -87,6 +112,10 @@ contract ConnectionUserRegistry is Ownable {
         require(newReceiver != address(0), "zero addr");
         emit FeeReceiverChanged(feeReceiver, newReceiver);
         feeReceiver = newReceiver;
+    }
+    
+    function setDefaultCommentFee(uint256 _fee) external onlyOwner {
+        defaultCommentFee = _fee;
     }
 
     function withdrawFee() external {
@@ -99,17 +128,17 @@ contract ConnectionUserRegistry is Ownable {
     }
 
     /** 开启新一轮 4 年空投 */
-    function startNewAirdropCycle(uint256 totalCT) external onlyOwner {
+    function startNewAirdropCycle(AirdropPool pool, uint256 totalCT) external onlyOwner {
         require(totalCT > 0, "zero amount");
         require(ctToken.balanceOf(address(this)) >= totalCT, "insufficient CT");
+        AirdropCycle storage cycle = airdropCycles[pool];
+        cycle.cycleStartTime = block.timestamp;
+        cycle.cycleEndTime   = block.timestamp + AIRDROP_CYCLE_DURATION;
+        cycle.cycleTotalCT   = totalCT;
+        cycle.distributedCT  = 0;
+        cycle.lastAirdropTS  = block.timestamp;
 
-        cycleStartTime = block.timestamp;
-        cycleEndTime   = block.timestamp + AIRDROP_CYCLE_DURATION;
-        cycleTotalCT   = totalCT;
-        distributedCT  = 0;
-        lastAirdropTS  = block.timestamp;
-
-        emit AirdropCycleStarted(cycleStartTime, cycleEndTime, totalCT);
+        emit AirdropCycleStarted(pool, cycle.cycleStartTime, cycle.cycleEndTime, totalCT);
     }
 
     // ============== 前端查询 API ==============
@@ -151,18 +180,54 @@ contract ConnectionUserRegistry is Ownable {
         }
     }
 
+    /**
+     * @dev 内部函数，计算当前可领取的空投数量
+     * @return amount 可领取的 CT 数量
+     */
+    function _getAirdropAmount(AirdropPool pool) internal view returns (uint256 amount) {
+        AirdropCycle storage cycle = airdropCycles[pool];
+
+        if (block.timestamp >= cycle.cycleEndTime || cycle.cycleTotalCT == 0) {
+            return 0;
+        }
+
+        uint256 elapsed = block.timestamp - cycle.lastAirdropTS;
+        if (elapsed == 0) return 0;
+
+        uint256 shouldRelease = elapsed * cycle.cycleTotalCT / AIRDROP_CYCLE_DURATION;
+        uint256 remainingInCycle = cycle.cycleTotalCT - cycle.distributedCT;
+        if (shouldRelease > remainingInCycle) {
+            shouldRelease = remainingInCycle;
+        }
+
+        uint256 contractBalance = ctToken.balanceOf(address(this));
+        if (shouldRelease > contractBalance) {
+            shouldRelease = contractBalance;
+        }
+
+        return shouldRelease;
+    }
+
+    /**
+     * @dev 计算当前调用可获得的预估空投数量
+     * @return amount 预估可领取的 CT 数量
+     */
+    function getEstimatedAirdrop(AirdropPool pool) external view returns (uint256 amount) {
+        return _getAirdropAmount(pool);
+    }
+
     // ============== 用户操作 ==============
     function registerUsername(string memory username) external payable {
         require(msg.value >= registrationFee, "fee low");
         require(users[msg.sender].registrationTime == 0, "already reg");
 
         bytes32 hash = _validate(username);
-        users[msg.sender] = UserProfile(hash, block.timestamp);
+        users[msg.sender] = UserProfile(hash, block.timestamp, 0);
         usernameHashToAddress[hash] = msg.sender;
         usernameHashToString[hash] = username;
         allUsers.push(msg.sender);
 
-        _executeAirdrop(msg.value);
+        _executeAirdrop(AirdropPool.User, msg.value);
 
         emit UsernameRegistered(msg.sender, username, msg.value);
     }
@@ -185,9 +250,15 @@ contract ConnectionUserRegistry is Ownable {
         usernameHashToAddress[newHash] = msg.sender;
         usernameHashToString[newHash] = newUsername;
 
-        _executeAirdrop(msg.value);
+        _executeAirdrop(AirdropPool.User, msg.value);
 
         emit UsernameModified(msg.sender, oldName, newUsername, msg.value);
+    }
+
+    function setUserCommentFee(uint256 _commentFee) external {
+        require(users[msg.sender].registrationTime != 0, "not registered");
+        users[msg.sender].commentFee = _commentFee;
+        emit UserCommentFeeSet(msg.sender, _commentFee);
     }
 
     // ============== 内部工具 ==============
@@ -200,26 +271,17 @@ contract ConnectionUserRegistry is Ownable {
     }
 
     /** 每次付费操作都可领取当前周期全部已线性释放的 CT */
-    function _executeAirdrop(uint256 ai3Paid) internal {
-        if (block.timestamp >= cycleEndTime || cycleTotalCT == 0) return;
+    function _executeAirdrop(AirdropPool pool, uint256 ai3Paid) internal {
+        AirdropCycle storage cycle = airdropCycles[pool];
+        uint256 airdropAmount = _getAirdropAmount(pool);
 
-        uint256 elapsed = block.timestamp - lastAirdropTS;
-        if (elapsed == 0) return;
-
-        uint256 shouldRelease = elapsed * cycleTotalCT / AIRDROP_CYCLE_DURATION;
-        uint256 remaining = cycleTotalCT - distributedCT;
-        if (shouldRelease > remaining) shouldRelease = remaining;
-
-        if (shouldRelease == 0) return;
-
-        uint256 bal = ctToken.balanceOf(address(this));
-        if (shouldRelease > bal) shouldRelease = bal;
-
-        ctToken.transfer(msg.sender, shouldRelease);
-        distributedCT += shouldRelease;
-        lastAirdropTS = block.timestamp;
-
-        emit AirdropExecuted(msg.sender, ai3Paid, shouldRelease);
+        if (airdropAmount > 0) {
+            ctToken.transfer(msg.sender, airdropAmount);
+            cycle.distributedCT += airdropAmount;
+            cycle.lastAirdropTS = block.timestamp;
+            
+            emit AirdropExecuted(msg.sender, ai3Paid, airdropAmount);
+        }
     }
 
     // ============== 消息操作 API ==============
@@ -246,7 +308,7 @@ contract ConnectionUserRegistry is Ownable {
         userMessages[msg.sender].push(messageId);
 
         // 每发布一条消息，也执行空投（激励内容产出）
-        _executeAirdrop(0); // 假设消息发布无需费用，但可以触发空投
+        _executeAirdrop(AirdropPool.Content, 0); // 假设消息发布无需费用，但可以触发空投
 
         emit MessagePosted(messageId, msg.sender, content);
     }
@@ -266,10 +328,60 @@ contract ConnectionUserRegistry is Ownable {
         allMessages[messageId].likes++;
 
         // 点赞可以触发空投
-        _executeAirdrop(0); 
+        _executeAirdrop(AirdropPool.Content, 0); 
         
         emit MessageLiked(messageId, msg.sender, allMessages[messageId].likes);
     }
+
+    function commentOnMessage(uint256 messageId, uint256 parentCommentId, string memory content) external payable {
+        require(users[msg.sender].registrationTime != 0, "not registered");
+        require(messageId < allMessages.length, "message not found");
+        require(bytes(content).length > 0 && bytes(content).length <= 280, "content length invalid");
+
+        Message storage originalMessage = allMessages[messageId];
+        uint256 userFee = users[originalMessage.author].commentFee;
+        uint256 fee = userFee > 0 ? userFee : defaultCommentFee;
+
+        // Fee logic
+        if (messageComments[messageId].length == 0) {
+            // First comment on this message, fee is required
+            require(msg.value >= fee, "comment fee low");
+            if (fee > 0) {
+                uint256 authorShare = fee * 80 / 100;
+                uint256 receiverShare = fee - authorShare;
+
+                (bool authorSuccess, ) = payable(originalMessage.author).call{value: authorShare}("");
+                require(authorSuccess, "author transfer failed");
+
+                (bool receiverSuccess, ) = payable(feeReceiver).call{value: receiverShare}("");
+                require(receiverSuccess, "receiver transfer failed");
+            }
+        } else {
+            // Subsequent comments are free
+            require(msg.value == 0, "comment is free");
+        }
+
+        if (parentCommentId != 0) {
+            require(parentCommentId < allComments.length, "parent comment not found");
+            require(allComments[parentCommentId].messageId == messageId, "parent comment mismatch");
+        }
+
+        uint256 commentId = allComments.length;
+        Comment memory newComment = Comment(commentId, msg.sender, content, block.timestamp, 0, messageId, parentCommentId);
+        allComments.push(newComment);
+
+        if (parentCommentId == 0) {
+            messageComments[messageId].push(commentId);
+        } else {
+            commentReplies[parentCommentId].push(commentId);
+        }
+
+        // Commenting triggers content airdrop
+        _executeAirdrop(AirdropPool.Content, msg.value);
+
+        emit CommentPosted(commentId, msg.sender, messageId, parentCommentId, content);
+    }
+
 
     // ============== 前端查询 API ==============
 
@@ -287,6 +399,12 @@ contract ConnectionUserRegistry is Ownable {
     function getMessage(uint256 messageId) external view returns (Message memory) {
         require(messageId < allMessages.length, "message not found");
         return allMessages[messageId];
+    }
+
+    /** @dev 获取单条评论详情 */
+    function getComment(uint256 commentId) external view returns (Comment memory) {
+        require(commentId < allComments.length, "comment not found");
+        return allComments[commentId];
     }
     
     /** @dev 检查用户是否点赞了某条消息 */

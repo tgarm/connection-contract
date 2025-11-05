@@ -7,16 +7,20 @@
     <div v-else class="wallet-info">
       <div class="network-selector">
         <label for="network-select">目标网络:</label>
-        <select id="network-select" :value="currentNetworkKey" @change="e => switchNetwork(e.target.value)">
-          <option v-for="(net, key) in NETWORKS" :key="key" :value="key">
+        <select id="network-select" :value="currentNetworkKey" @change="e => switchNetwork(e.target.value)" :disabled="isDropdownDisabled">
+          <option v-for="(net, key) in availableNetworks" :key="key" :value="key">
             {{ net.name }} ({{ net.nativeCurrency.symbol }})
           </option>
         </select>
       </div>
 
-      <p><strong>地址:</strong> {{ shortAddr }}</p>
-      <p><strong>{{ nativeSymbol }} 余额:</strong> {{ ai3Balance }}</p>
-      <p><strong>CT 余额:</strong> {{ ctBalance }}</p>
+      <div class="balance-display">
+        <span><strong>地址:</strong> {{ shortAddr }}</span>
+        <span><strong>{{ nativeSymbol }}:</strong> {{ ai3Balance }}</span>
+        <span><strong>CT:</strong> {{ ctBalance }}</span>
+
+        <button @click="emit('refresh')" class="refresh-btn" title="刷新余额">🔄</button>
+      </div>
 
       <div class="tags">
         <span v-if="isRegistered" class="tag registered">已注册 ({{ registeredUsername }})</span>
@@ -25,30 +29,67 @@
       </div>
 
       <p class="warning-text">
-        ⚠️ 当前网络: <strong>{{ NETWORKS[currentNetworkKey].name }}</strong><br>
-        请确保有足够的 {{ nativeSymbol }} 支付 Gas 与注册费。
+        ⚠️ 当前网络: <strong>{{ currentNetwork ? currentNetwork.name : '未知' }}</strong><br>
+        请确保有足够的 {{ nativeSymbol }} 支付 Gas 费。
       </p>
     </div>
   </div>
 </template>
 
-<script setup>
-import { computed } from 'vue';
+<script>
+import { computed, defineComponent } from 'vue';
 import {
   walletAddress, ai3Balance, ctBalance, currentNetworkKey,
   connectWallet, switchNetwork
 } from '../lib/wallet-and-rpc'; // 假设这些状态和方法已在 lib/wallet-and-rpc.js 中定义
-import { NETWORKS } from '../lib/constants'; // 假设常量已定义
+import { NETWORKS, ContractConfig } from '../lib/constants'; // 假设常量已定义
 
-const props = defineProps({
-    isRegistered: Boolean,
-    registeredUsername: String,
-    isFeeReceiver: Boolean,
-    isOwner: Boolean,
+export default defineComponent({
+  name: 'WalletConnectPanel',
+  props: {
+      isRegistered: Boolean,
+      registeredUsername: String,
+      isFeeReceiver: Boolean,
+      isOwner: Boolean,
+  },
+  emits: ['refresh'],
+  setup(props, { emit }) {
+    const availableNetworks = computed(() => {
+      const result = Object.keys(NETWORKS).reduce((acc, key) => {
+        if (ContractConfig.networks[key]) {
+          acc[key] = NETWORKS[key];
+        }
+        return acc;
+      }, {});
+      return result;
+    });
+
+    const isDropdownDisabled = computed(() => {
+      return Object.keys(availableNetworks.value).length <= 1;
+    });
+
+    const shortAddr = computed(() => walletAddress.value?.slice(0,6) + '...' + walletAddress.value?.slice(-4) || '');
+    const currentNetwork = computed(() => NETWORKS[currentNetworkKey.value]);
+    const nativeSymbol = computed(() => currentNetwork.value?.nativeCurrency?.symbol || 'ETH');
+
+    return {
+      // Expose to template
+      walletAddress,
+      ai3Balance,
+      ctBalance,
+      currentNetworkKey,
+      connectWallet,
+      switchNetwork,
+      availableNetworks,
+      isDropdownDisabled,
+      shortAddr,
+      currentNetwork,
+      nativeSymbol,
+      emit,
+      NETWORKS, // also expose NETWORKS for the template
+    };
+  }
 });
-
-const shortAddr = computed(() => walletAddress.value?.slice(0,6) + '...' + walletAddress.value?.slice(-4) || '');
-const nativeSymbol = computed(() => NETWORKS[currentNetworkKey.value]?.nativeCurrency?.symbol || 'ETH');
 </script>
 
 <style scoped>
@@ -65,6 +106,24 @@ const nativeSymbol = computed(() => NETWORKS[currentNetworkKey.value]?.nativeCur
 }
 .wallet-info {
     padding: 10px 0;
+}
+.balance-display {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 15px;
+    background-color: #f9f9f9;
+    padding: 8px 12px;
+    border-radius: 4px;
+    border: 1px solid #eee;
+    font-size: 0.9em;
+}
+.refresh-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1.2em;
+    padding: 0 5px;
 }
 .tags {
     margin: 10px 0;

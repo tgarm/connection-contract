@@ -7,6 +7,7 @@
         :registeredUsername="registeredUsername"
         :isFeeReceiver="isFeeReceiver"
         :isOwner="isOwner"
+        @refresh="loadAllData"
     />
 
     <hr>
@@ -88,19 +89,22 @@
                 
                 :contractNativeBal="contractNativeBal"
                 :contractCTBal="contractCTBal"
-                :distributedCT="distributedCT"
-                :remainingCT="remainingCT"
+                :userAirdropData="userAirdropData"
+                :contentAirdropData="contentAirdropData"
                 :totalRegisteredUsers="totalRegisteredUsers"
                 
                 :initialRegFee="adminRegFee"
                 :initialModFee="adminModFee"
                 :initialFeeReceiver="adminFeeReceiver"
-                :initialAirdropAmount="adminAirdropAmount"
+                :initialDefaultCommentFee="adminDefaultCommentFee"
+                :initialUserAirdropAmount="adminUserAirdropAmount"
+                :initialContentAirdropAmount="adminContentAirdropAmount"
                 
                 @withdrawFee="withdrawFee"
                 @setFees="setFees"
                 @setFeeReceiver="setFeeReceiver"
                 @startAirdropCycle="startAirdropCycle"
+                @setDefaultCommentFee="setDefaultCommentFee"
             />
         </el-tab-pane>
 
@@ -129,14 +133,12 @@ import {
   fetchBalances,
   registry, getRegistryWithSigner,
   getProvider
-} from '../lib/wallet-and-rpc'; // 假设 registerUser 现在处理了交易发送和等待
+} from '../lib/wallet-and-rpc';
 import { logMessage } from '../lib/log-system';
-import { NETWORKS, REGISTRY_ADDRESS, CT_TOKEN_ADDRESS, CT_TOKEN_ABI } from '../lib/constants';
+import { NETWORKS, getContractAddresses, CT_TOKEN_ABI } from '../lib/constants';
 
 
 // ==================== 状态 & 常量 ====================
-const FRONTEND_AIRDROP_RATIO_BP = 1000; // 10%
-
 const activeTab = ref('account'); // 默认显示账户 Tab
 
 const username = ref('');
@@ -160,15 +162,26 @@ const isOwner = ref(false);
 const adminRegFee = ref(0.01);
 const adminModFee = ref(0.01);
 const adminFeeReceiver = ref('');
-const adminAirdropAmount = ref(10000); 
+const adminDefaultCommentFee = ref(0.001);
+const adminUserAirdropAmount = ref(10000);
+const adminContentAirdropAmount = ref(100000);
 
 // 合约实时数据
 const contractNativeBal = ref('0');
 const contractCTBal = ref('0');
-const distributedCT = ref('0');
-const remainingCT = ref('0');
+const userAirdropData = ref({
+    distributed: '0',
+    remaining: '0',
+    total: '0'
+});
+const contentAirdropData = ref({
+    distributed: '0',
+    remaining: '0',
+    total: '0'
+});
 const totalRegisteredUsers = ref(0);
 const addressUsernameMap = ref({}); // 用户名缓存
+const estimatedAirdrop = ref('0');
 
 
 // ==================== 计算属性 ===================
@@ -180,23 +193,6 @@ const canUpdate = computed(() =>
     newUsername.value !== registeredUsername.value && 
     !updating.value
 );
-
-// 预估空投计算
-const estimatedAirdrop = computed(() => {
-    if (remainingCT.value === '0' || totalRegisteredUsers.value === 0) {
-        return 0;
-    }
-    
-    const remaining = Number(remainingCT.value);
-    const ratio = FRONTEND_AIRDROP_RATIO_BP / 10000;
-    const users = totalRegisteredUsers.value;
-    
-    const totalAirdropPool = remaining * ratio;
-    const newShare = totalAirdropPool / (users + 1); 
-    
-    return newShare.toFixed(4);
-});
-
 
 // ==================== 实用工具 & 合约实例 ===================
 
@@ -225,7 +221,8 @@ const loadAllData = async () => {
   await Promise.allSettled([
     fetchBalances(walletAddress.value), 
     loadUserProfile(), 
-    loadContractInfo() 
+    loadContractInfo(),
+    updateEstimatedAirdrop()
   ]);
   
   logMessage('数据刷新完成。', 'success');
@@ -233,7 +230,7 @@ const loadAllData = async () => {
 
 const loadUserProfile = async () => {
   try {
-    const reg = registry();
+    const reg = registry(currentNetworkKey.value);
     if (!reg) return;
 
     // 1. 用户名和注册信息
@@ -252,11 +249,12 @@ const loadUserProfile = async () => {
     }
 
     // 2. 权限和费用
-    const [owner, receiver, regFee, modFee] = await Promise.all([
+    const [owner, receiver, regFee, modFee, defCommentFee] = await Promise.all([
       reg.owner(),
       reg.feeReceiver(),
       reg.registrationFee(),
-      reg.modificationFee()
+      reg.modificationFee(),
+      reg.defaultCommentFee()
     ]);
 
     isOwner.value = owner.toLowerCase() === walletAddress.value.toLowerCase();
@@ -265,6 +263,7 @@ const loadUserProfile = async () => {
 
     adminRegFee.value = Number(ethers.formatEther(regFee));
     adminModFee.value = Number(ethers.formatEther(modFee));
+    adminDefaultCommentFee.value = Number(ethers.formatEther(defCommentFee));
   } catch (e) {
     logMessage(`身份加载失败: ${e.message}`, 'error');
   }
@@ -273,26 +272,50 @@ const loadUserProfile = async () => {
 const loadContractInfo = async () => {
   try {
     const p = getProvider();
-    const ct = new ethers.Contract(CT_TOKEN_ADDRESS, CT_TOKEN_ABI, p);
-    const reg = registry();
+    const addresses = getContractAddresses(currentNetworkKey.value);
+    if (!addresses) return;
+    const ct = new ethers.Contract(addresses.ctTokenAddress, CT_TOKEN_ABI, p);
+    const reg = registry(currentNetworkKey.value);
 
     // 关键修正：totalRegisteredUsers 变为 totalUsers
-    const [nativeBal, ctBal, dist, total, totalUsersCount] = await Promise.all([
-      p.getBalance(REGISTRY_ADDRESS),
-      ct.balanceOf(REGISTRY_ADDRESS),
-      reg.distributedCT(),
-      reg.cycleTotalCT(),
+    const [nativeBal, ctBal, userCycle, contentCycle, totalUsersCount] = await Promise.all([
+      p.getBalance(addresses.registryAddress),
+      ct.balanceOf(addresses.registryAddress),
+      reg.airdropCycles(0), // AirdropPool.User
+      reg.airdropCycles(1), // AirdropPool.Content
       reg.totalUsers() // ✅ 匹配合约 public totalUsers()
     ]);
 
     contractNativeBal.value = ethers.formatEther(nativeBal);
     contractCTBal.value = ethers.formatEther(ctBal);
-    distributedCT.value = ethers.formatEther(dist);
-    remainingCT.value = ethers.formatEther(total > dist ? total - dist : 0n);
+
+    userAirdropData.value.total = ethers.formatEther(userCycle.cycleTotalCT);
+    userAirdropData.value.distributed = ethers.formatEther(userCycle.distributedCT);
+    const userRemaining = userCycle.cycleTotalCT > userCycle.distributedCT ? userCycle.cycleTotalCT - userCycle.distributedCT : 0n;
+    userAirdropData.value.remaining = ethers.formatEther(userRemaining);
+
+    contentAirdropData.value.total = ethers.formatEther(contentCycle.cycleTotalCT);
+    contentAirdropData.value.distributed = ethers.formatEther(contentCycle.distributedCT);
+    const contentRemaining = contentCycle.cycleTotalCT > contentCycle.distributedCT ? contentCycle.cycleTotalCT - contentCycle.distributedCT : 0n;
+    contentAirdropData.value.remaining = ethers.formatEther(contentRemaining);
+
     totalRegisteredUsers.value = Number(totalUsersCount); 
   } catch (e) {
     logMessage(`合约数据加载失败: ${e.message}`, 'error');
   }
+};
+
+const updateEstimatedAirdrop = async () => {
+    const reg = registry(currentNetworkKey.value);
+    if (!reg) return;
+    try {
+        const amount = await reg.getEstimatedAirdrop(0); // AirdropPool.User
+        // 将结果格式化为 ether 单位并保留4位小数
+        estimatedAirdrop.value = parseFloat(ethers.formatEther(amount)).toFixed(4);
+    } catch (e) {
+        logMessage(`获取预估空投失败: ${e.message}`, 'error');
+        estimatedAirdrop.value = '0';
+    }
 };
 
 
@@ -302,7 +325,7 @@ const queryUsernameAddr = async () => {
   querying.value = true;
   queryUsernameResult.value = '';
   try {
-    const addr = await registry().getAddressByUsername(queryUsername.value); 
+    const addr = await registry(currentNetworkKey.value).getAddressByUsername(queryUsername.value); 
     queryUsernameResult.value = addr === ethers.ZeroAddress ? null : addr;
     logMessage(`查询用户名 "${queryUsername.value}" → ${queryUsernameResult.value || '未注册'}`);
   } catch (e) {
@@ -318,7 +341,7 @@ const queryAddressUsername = async () => {
     querying.value = true;
     queryAddressResult.value = '';
     try {
-        const reg = registry();
+        const reg = registry(currentNetworkKey.value);
         const username = await reg.getUsernameByAddress(queryAddress.value);
         queryAddressResult.value = username === '' ? null : username;
         logMessage(`查询地址 "${shortQueryAddr.value}" → ${queryAddressResult.value || '未注册'}`, 'info');
@@ -342,7 +365,7 @@ const handleUpdateUsername = async () => {
     if (!canUpdate.value) return;
     
     updating.value = true;
-    const reg = await getRegistryWithSigner();
+    const reg = await getRegistryWithSigner(currentNetworkKey.value);
     
     try {
         logMessage(`正在将用户名从 "${registeredUsername.value}" 修改为 "${newUsername.value}"...`, 'info');
@@ -371,7 +394,7 @@ const handleUpdateUsername = async () => {
 // ==================== Owner 管理操作 (事件处理) ===================
 
 const setFees = async (regFee, modFee) => {
-  const reg = await getRegistryWithSigner();
+  const reg = await getRegistryWithSigner(currentNetworkKey.value);
   try {
     await (await reg.setRegistrationFee(ethers.parseEther(regFee.toString()))).wait();
     await (await reg.setModificationFee(ethers.parseEther(modFee.toString()))).wait();
@@ -384,7 +407,7 @@ const setFeeReceiver = async (receiverAddr) => {
   if (!receiverAddr || !ethers.isAddress(receiverAddr)) {
     return logMessage('无效的 Fee Receiver 地址', 'error');
   }
-  const reg = await getRegistryWithSigner();
+  const reg = await getRegistryWithSigner(currentNetworkKey.value);
   try {
     await (await reg.setFeeReceiver(receiverAddr)).wait();
     logMessage(`FeeReceiver 已设为 ${receiverAddr}`, 'success');
@@ -392,23 +415,33 @@ const setFeeReceiver = async (receiverAddr) => {
   } catch (e) { logMessage(`设置失败: ${e.message}`, 'error'); }
 };
 
-const startAirdropCycle = async (amount) => {
+const startAirdropCycle = async (pool, amount) => {
   if (amount <= 0) return logMessage('无效数量', 'error');
-  const reg = await getRegistryWithSigner();
+  const reg = await getRegistryWithSigner(currentNetworkKey.value);
   try {
-    await (await reg.startNewAirdropCycle(ethers.parseEther(amount.toString()))).wait(); 
-    logMessage(`新周期开启！${amount} CT`, 'success');
+    const poolName = pool === 0 ? 'User' : 'Content';
+    await (await reg.startNewAirdropCycle(pool, ethers.parseEther(amount.toString()))).wait(); 
+    logMessage(`新 ${poolName} 空投周期开启！总额: ${amount} CT`, 'success');
     await loadAllData(); 
   } catch (e) { logMessage(`开启失败: ${e.message}`, 'error'); }
 };
 
 const withdrawFee = async () => {
-  const reg = await getRegistryWithSigner();
+  const reg = await getRegistryWithSigner(currentNetworkKey.value);
   try {
     await (await reg.withdrawFee()).wait();
     logMessage(`费用已提取 ${contractNativeBal.value} ${nativeSymbol.value}`, 'success');
     await loadAllData(); 
   } catch (e) { logMessage(`提取失败: ${e.message}`, 'error'); }
+};
+
+const setDefaultCommentFee = async (fee) => {
+  const reg = await getRegistryWithSigner(currentNetworkKey.value);
+  try {
+    await (await reg.setDefaultCommentFee(ethers.parseEther(fee.toString()))).wait();
+    logMessage('默认评论费用更新成功', 'success');
+    await loadAllData(); 
+  } catch (e) { logMessage(`费用更新失败: ${e.message}`, 'error'); }
 };
 
 

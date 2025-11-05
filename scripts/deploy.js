@@ -7,20 +7,26 @@ require('dotenv').config();
 const FEE_RECEIVER = process.env.FEE_RECEIVER?.trim();
 const BASE_SCAN_API_KEY = process.env.BASE_SCAN_API_KEY?.trim();
 
-/**
- * 辅助函数：更新前端 .env 文件中的键值
- */
-function updateEnvFile(filePath, key, value) {
-    let content = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
-    const regex = new RegExp(`^${key}=.*$`, 'm');
-    const newValue = `${key}=${value}`;
-    if (content.match(regex)) {
-        content = content.replace(regex, newValue);
-    } else {
-        content += `\n${newValue}`;
+/** * 辅助函数：更新前端的 JSON 配置文件 */
+function updateContractConfig(filePath, networkName, registryAddress, tokenAddress) {
+    let config = {};
+    if (fs.existsSync(filePath)) {
+        try {
+            config = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        } catch (e) {
+            console.warn("Could not parse existing contracts.json, starting fresh.");
+        }
     }
-    fs.writeFileSync(filePath, content.trim() + '\n');
-    console.log(`Updated ${key} in frontend .env`);
+
+    config.defaultNetwork = networkName;
+    config.networks = config.networks || {};
+    config.networks[networkName] = {
+        registryAddress,
+        ctTokenAddress: tokenAddress
+    };
+
+    fs.writeFileSync(filePath, JSON.stringify(config, null, 2));
+    console.log(`Updated contract addresses for ${networkName} in ${filePath}`);
 }
 
 async function main() {
@@ -28,8 +34,9 @@ async function main() {
     console.log(`部署到 ${hre.network.name} 的账户: ${deployer.address}`);
 
     const initialSupply = hre.ethers.utils.parseEther("2000000.0");
-    const REG_FEE       = hre.ethers.utils.parseEther("0.01");
-    const MOD_FEE       = hre.ethers.utils.parseEther("0.005");    
+    const REG_FEE = hre.ethers.utils.parseEther("0.01");
+    const MOD_FEE = hre.ethers.utils.parseEther("0.005");
+    const DEFAULT_COMMENT_FEE = hre.ethers.utils.parseEther("0.001");
 
     // --- 1. 部署 CT ---
     const CT = await hre.ethers.getContractFactory("ConnectionToken");
@@ -39,7 +46,7 @@ async function main() {
 
     // --- 2. 部署 Registry ---
     const Registry = await hre.ethers.getContractFactory("ConnectionUserRegistry");
-    const registry = await Registry.deploy(ctToken.address, REG_FEE, MOD_FEE);
+    const registry = await Registry.deploy(ctToken.address, REG_FEE, MOD_FEE, DEFAULT_COMMENT_FEE);
     await registry.deployed();
     console.log("Registry 已部署到:", registry.address);
 
@@ -50,21 +57,22 @@ async function main() {
     const bal = await ctToken.balanceOf(registry.address);
     if (bal < totalAirdropAmount) {
         throw new Error(`Registry 余额不足！需要 ${hre.ethers.formatEther(totalAirdropAmount)} CT，实际只有 ${hre.ethers.formatEther(bal)}`);
-    }    
-    await registry.startNewAirdropCycle(totalAirdropAmount);
-    console.log("空投周期已启动");
+    }
+    // Start both airdrop cycles
+    await (await registry.startNewAirdropCycle(0, totalAirdropAmount)).wait(); // User Pool
+    console.log("User airdrop cycle started");
+    await (await registry.startNewAirdropCycle(1, totalAirdropAmount)).wait(); // Content Pool
+    console.log("Content airdrop cycle started");
 
     // 4. 可选：设置 FeeReceiver
     if (FEE_RECEIVER && ethers.utils.isAddress(FEE_RECEIVER)) {
         await (await registry.setFeeReceiver(FEE_RECEIVER)).wait();
         console.log(`FeeReceiver set to ${FEE_RECEIVER}`);
     }
-
-    // --- 5. 更新前端 .env ---
-    const frontEndEnvPath = path.join(__dirname, '..', 'demo-web', '.env');
-    updateEnvFile(frontEndEnvPath, 'VUE_APP_NETWORK_KEY', hre.network.name);
-    updateEnvFile(frontEndEnvPath, 'VUE_APP_REGISTRY_ADDRESS', registry.address);
-    updateEnvFile(frontEndEnvPath, 'VUE_APP_CT_TOKEN_ADDRESS', ctToken.address);
+    
+    // --- 5. 更新前端 JSON 配置文件 ---
+    const frontEndConfigPath = path.join(__dirname, '..', 'demo-web', 'src', 'config', 'contracts.json');
+    updateContractConfig(frontEndConfigPath, hre.network.name, registry.address, ctToken.address);
 
     // --- 6. 复制 ABI ---
     const abiPath = path.join(__dirname, '..', 'demo-web', 'src', 'config', 'abi', 'ConnectionUserRegistry.json');
@@ -89,7 +97,7 @@ async function main() {
 
                 await hre.run("verify:verify", {
                     address: registry.address,
-                    constructorArguments: [ctToken.address, REG_FEE, MOD_FEE],
+                    constructorArguments: [ctToken.address, REG_FEE, MOD_FEE, DEFAULT_COMMENT_FEE],
                 });
                 console.log("✅ Registry 验证成功");
             } catch (e) {

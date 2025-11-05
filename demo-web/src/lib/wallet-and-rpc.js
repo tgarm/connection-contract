@@ -5,7 +5,7 @@ import { ethers } from 'ethers';
 import { logMessage } from './log-system';
 import { 
     REGISTRY_ADDRESS, CT_TOKEN_ADDRESS, REGISTRY_ABI, CT_TOKEN_ABI,
-    NETWORKS, DEFAULT_NETWORK_KEY
+    NETWORKS, DEFAULT_NETWORK_KEY, getContractAddresses
 } from './constants';
 
 // =================================================================
@@ -91,16 +91,17 @@ export const fetchBalances = async (address) => {
         ai3Balance.value = `${ethers.formatEther(ethWei)} ${symbol}`;
 
         // 2. 获取 CT Token 余额
-        if (CT_TOKEN_ADDRESS) {
+        const addresses = getContractAddresses(currentNetworkKey.value);
+        if (addresses && addresses.ctTokenAddress) {
             try {
-                const ctContract = new ethers.Contract(CT_TOKEN_ADDRESS, CT_TOKEN_ABI, provider);
+                const ctContract = new ethers.Contract(addresses.ctTokenAddress, CT_TOKEN_ABI, provider);
                 const ctWei = await ctContract.balanceOf(address);
                 ctBalance.value = `${ethers.formatEther(ctWei)} CT`;
 
             } catch (ctError) {
                 // 仅在日志中报告 CT 错误，不影响 Gas 余额显示
                 if (ctError.code === 'BAD_DATA') {
-                    logMessage(`❌ CT 余额查询失败：Ethers.js 无法解码合约返回值。请确保该地址 ${CT_TOKEN_ADDRESS} 在当前网络已部署。`, 'error');
+                    logMessage(`❌ CT 余额查询失败：Ethers.js 无法解码合约返回值。请确保该地址 ${addresses.ctTokenAddress} 在当前网络已部署。`, 'error');
                 } else if (ctError.code !== 'CALL_EXCEPTION') {
                     logMessage(`❌ CT 余额查询发生未知错误: ${ctError.message}`, 'error');
                 }
@@ -159,8 +160,10 @@ export const registerUser = async (username) => {
 
         const provider = new ethers.BrowserProvider(window.ethereum);
         const signer = await provider.getSigner();
+        const addresses = getContractAddresses(currentNetworkKey.value);
+        if (!addresses) { logMessage(`当前网络 ${currentNetworkKey.value} 未配置合约地址。`, 'error'); return; }
 
-        const registryContract = new ethers.Contract(REGISTRY_ADDRESS, REGISTRY_ABI, signer);
+        const registryContract = new ethers.Contract(addresses.registryAddress, REGISTRY_ABI, signer);
         const registrationFeeWei = ethers.parseEther("0.01"); 
         const nativeSymbol = NETWORKS[currentNetworkKey.value].nativeCurrency.symbol;
         
@@ -201,22 +204,28 @@ export const getProvider = () =>
  * @dev 获取只读 Registry 合约实例
  * @returns ethers.Contract | null
  */
-export const registry = () => {
+export const registry = (networkKey) => {
     const p = getProvider();
-    return p ? new ethers.Contract(REGISTRY_ADDRESS, REGISTRY_ABI, p) : null;
+    const addresses = getContractAddresses(networkKey);
+    if (!p || !addresses) return null;
+    return new ethers.Contract(addresses.registryAddress, REGISTRY_ABI, p);
 };
 
 /**
  * @dev 获取带 Signer 的 Registry 合约实例 (用于发送交易)
  * @returns ethers.Contract | null
  */
-export const getRegistryWithSigner = async () => {
+export const getRegistryWithSigner = async (networkKey) => {
     const p = getProvider();
-    if (!p) return null;
+    const addresses = getContractAddresses(networkKey);
+    if (!p || !addresses) {
+        logMessage(`无法获取 Signer: 网络 ${networkKey} 未配置。`, 'error');
+        return null;
+    }
     
     try {
         const signer = await p.getSigner();
-        return new ethers.Contract(REGISTRY_ADDRESS, REGISTRY_ABI, signer);
+        return new ethers.Contract(addresses.registryAddress, REGISTRY_ABI, signer);
     } catch (e) {
         logMessage('无法获取 Signer: 请确保钱包已连接并授权。', 'error');
         return null;

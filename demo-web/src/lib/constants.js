@@ -1,6 +1,7 @@
 // src/lib/constants.js
 
 import RegistryJson from '../config/abi/ConnectionUserRegistry.json';
+import ContractConfig from '../config/contracts.json';
 
 // =================================================================
 // ABI & 合约地址 (从前端 .env 读取)
@@ -8,10 +9,12 @@ import RegistryJson from '../config/abi/ConnectionUserRegistry.json';
 export const CT_TOKEN_ABI = [
     {"inputs":[{"internalType":"address","name":"account","type":"address"}],"name":"balanceOf","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"}
 ];
-export const REGISTRY_ABI = RegistryJson.abi; 
+export const REGISTRY_ABI = RegistryJson.abi;
 
-export const REGISTRY_ADDRESS = process.env.VUE_APP_REGISTRY_ADDRESS; 
-export const CT_TOKEN_ADDRESS = process.env.VUE_APP_CT_TOKEN_ADDRESS;
+// 从 JSON 文件动态获取地址
+export const getContractAddresses = (networkKey) => {
+    return ContractConfig.networks[networkKey] || null;
+};
 
 // =================================================================
 // 多网络配置
@@ -34,4 +37,6 @@ export const NETWORKS = {
 };
 
 // 默认网络/当前部署网络 (从前端 .env 读取)
-export const DEFAULT_NETWORK_KEY = process.env.VUE_APP_NETWORK_KEY || 'baseSepolia';
+export const DEFAULT_NETWORK_KEY = ContractConfig.defaultNetwork || 'baseSepolia';
+
+export { ContractConfig };
