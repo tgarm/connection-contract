@@ -1,7 +1,6 @@
 <template>
   <div class="message-board section">
     <h3>📢 消息墙</h3>
-    <!-- ... template content ... -->
     <p v-if="!isRegistered" class="info-alert">请先注册用户名，才能发布和点赞消息。</p>
     
     <div v-if="isRegistered" class="post-message-area">
@@ -36,13 +35,19 @@
           </span>
           <span class="timestamp">{{ formatTime(msg.timestamp) }}</span>
           <button 
-            @click="handleLike(msg.id)" 
+            @click="handleLike(msg.id, false)" 
             :disabled="msg.isAuthor || msg.hasLiked || liking"
             :class="{liked: msg.hasLiked}"
             class="like-button"
           >
             👍 {{ msg.likes }}
           </button>
+        <button
+            @click="handleLike(msg.id, true)"
+            :disabled="msg.isAuthor || msg.hasLiked || liking"
+            class="like-button tip-button"
+          >💰 送出小费 ({{ defaultTipAmount }} {{ nativeSymbol }})</button>
+
         </div>
       </div>
       <p v-if="!displayedMessages.length && !loading">暂无消息。</p>
@@ -53,11 +58,13 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue';
+import { ethers } from 'ethers';
 import { logMessage } from '../lib/log-system';
-import { registry, walletAddress, getRegistryWithSigner, currentNetworkKey } from '../lib/wallet-and-rpc';
+import { registry, walletAddress, getRegistryWithSigner, currentNetworkKey, nativeSymbol} from '../lib/wallet-and-rpc';
 
 const props = defineProps({
     isRegistered: Boolean,
+    defaultTipAmount: Number,
     loadAllData: Function,
     // 从主组件获取的用户名信息
     addressUsernameMap: Object,
@@ -143,7 +150,7 @@ const handlePostMessage = async () => {
     }
 };
 
-const handleLike = async (messageId) => {
+const handleLike = async (messageId, withTip) => {
     if (!props.isRegistered) return logMessage('请先注册才能点赞', 'error');
     
     // 乐观更新（可选）
@@ -155,11 +162,19 @@ const handleLike = async (messageId) => {
 
     liking.value = true;
     const reg = await getRegistryWithSigner(currentNetworkKey.value);
+    const options = {};
+    if (withTip && props.defaultTipAmount > 0) {
+        options.value = ethers.parseEther(props.defaultTipAmount.toString());
+        logMessage(`正在使用 ${props.defaultTipAmount} ${nativeSymbol.value} 的小费点赞...`, 'info');
+    } else {
+        logMessage(`正在免费点赞...`, 'info');
+    }
+
     try {
-        const tx = await reg.likeMessage(messageId);
+        const tx = await reg.likeMessage(messageId, options);
         await tx.wait();
-        logMessage(`👍 成功点赞消息 #${messageId}`, 'success');
-        // 重新获取或仅更新该消息
+        logMessage(`👍 成功点赞消息 #${messageId}${withTip ? ' 并送出小费' : ''}`, 'success');
+        await props.loadAllData(); // 刷新空投数据
         await fetchLatestMessages(); 
 
     } catch (error) {
@@ -362,6 +377,11 @@ watch(() => props.isRegistered, (newVal) => {
 .like-button:disabled {
     cursor: not-allowed;
     opacity: 0.6;
+}
+.tip-button {
+    border-color: #E6A23C;
+    color: #E6A23C;
+    margin-left: 8px;
 }
 .like-button.liked {
     background-color: #FF9800;

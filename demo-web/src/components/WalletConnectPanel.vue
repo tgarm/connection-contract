@@ -39,10 +39,10 @@
 <script>
 import { computed, defineComponent } from 'vue';
 import {
-  walletAddress, ai3Balance, ctBalance, currentNetworkKey,
-  connectWallet, switchNetwork
+  walletAddress, ai3Balance, ctBalance, currentNetworkKey, nativeSymbol,
+  connectWallet, switchNetwork, currentNetwork
 } from '../lib/wallet-and-rpc'; // 假设这些状态和方法已在 lib/wallet-and-rpc.js 中定义
-import { NETWORKS, ContractConfig } from '../lib/constants'; // 假设常量已定义
+import { NETWORKS, ContractConfig } from '../lib/constants';
 
 export default defineComponent({
   name: 'WalletConnectPanel',
@@ -69,8 +69,6 @@ export default defineComponent({
     });
 
     const shortAddr = computed(() => walletAddress.value?.slice(0,6) + '...' + walletAddress.value?.slice(-4) || '');
-    const currentNetwork = computed(() => NETWORKS[currentNetworkKey.value]);
-    const nativeSymbol = computed(() => currentNetwork.value?.nativeCurrency?.symbol || 'ETH');
 
     return {
       // Expose to template
@@ -85,8 +83,7 @@ export default defineComponent({
       shortAddr,
       currentNetwork,
       nativeSymbol,
-      emit,
-      NETWORKS, // also expose NETWORKS for the template
+      emit
     };
   }
 });

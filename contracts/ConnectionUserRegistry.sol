@@ -27,6 +27,7 @@ contract ConnectionUserRegistry is Ownable {
     uint256 public registrationFee;
     uint256 public modificationFee;
     uint256 public defaultCommentFee;
+    uint256 public defaultTipAmount;
     address public feeReceiver;                     // 可随时更改
 
     // ============== 线性空投（4 年周期） ==============
@@ -37,7 +38,7 @@ contract ConnectionUserRegistry is Ownable {
         uint256 distributedCT;
         uint256 lastAirdropTS;
     }
-    enum AirdropPool { User, Content }
+    enum AirdropPool { User, Content, Tip }
     uint256 public constant AIRDROP_CYCLE_DURATION = 126144000; // ~4 years
     mapping(AirdropPool => AirdropCycle) public airdropCycles;
 
@@ -87,7 +88,7 @@ contract ConnectionUserRegistry is Ownable {
 
     event MessagePosted(uint256 indexed id, address indexed author, string content);
     event CommentPosted(uint256 indexed id, address indexed author, uint256 indexed messageId, uint256 parentId, string content);
-    event MessageLiked(uint256 indexed id, address indexed user, uint256 newLikes);
+    event MessageLiked(uint256 indexed id, address indexed user, uint256 newLikes, uint256 tipAmount);
 
 
     // ============== 构造函数 ==============
@@ -95,12 +96,14 @@ contract ConnectionUserRegistry is Ownable {
         address _ctToken,
         uint256 _regFee,
         uint256 _modFee,
-        uint256 _defaultCommentFee
+        uint256 _defaultCommentFee,
+        uint256 _defaultTip
     ) Ownable(msg.sender) {
         ctToken = ConnectionToken(_ctToken);
         registrationFee = _regFee;
         modificationFee = _modFee;
         defaultCommentFee = _defaultCommentFee;
+        defaultTipAmount = _defaultTip;
         feeReceiver = msg.sender;
     }
 
@@ -116,6 +119,10 @@ contract ConnectionUserRegistry is Ownable {
     
     function setDefaultCommentFee(uint256 _fee) external onlyOwner {
         defaultCommentFee = _fee;
+    }
+
+    function setDefaultTipAmount(uint256 _tip) external onlyOwner {
+        defaultTipAmount = _tip;
     }
 
     function withdrawFee() external {
@@ -315,22 +322,35 @@ contract ConnectionUserRegistry is Ownable {
     
     /** * @dev 点赞一条消息。用户不能给自己点赞，也不能重复点赞。
      */
-    function likeMessage(uint256 messageId) external {
+    function likeMessage(uint256 messageId) external payable {
         // 确保消息存在
         require(messageId < allMessages.length, "message not found");
+        Message storage likedMessage = allMessages[messageId];
         // 不能给自己点赞
-        require(allMessages[messageId].author != msg.sender, "cannot like own message");
+        require(likedMessage.author != msg.sender, "cannot like own message");
         // 不能重复点赞
         require(!userLikes[messageId][msg.sender], "already liked");
 
         // 更新状态
         userLikes[messageId][msg.sender] = true;
-        allMessages[messageId].likes++;
+        likedMessage.likes++;
 
-        // 点赞可以触发空投
-        _executeAirdrop(AirdropPool.Content, 0); 
+        // 处理可选的小费
+        if (msg.value > 0) {
+            uint256 authorShare = msg.value * 80 / 100; // 80% to author
+            // The remaining 20% is the tax and stays in the contract
+            if (authorShare > 0) {
+                (bool success, ) = payable(likedMessage.author).call{value: authorShare}("");
+                require(success, "tip transfer failed");
+            }
+        }
+
+        // 如果小费达到或超过默认值，则执行空投
+        if (msg.value >= defaultTipAmount) {
+            _executeAirdrop(AirdropPool.Tip, msg.value);
+        }
         
-        emit MessageLiked(messageId, msg.sender, allMessages[messageId].likes);
+        emit MessageLiked(messageId, msg.sender, likedMessage.likes, msg.value);
     }
 
     function commentOnMessage(uint256 messageId, uint256 parentCommentId, string memory content) external payable {
@@ -343,21 +363,15 @@ contract ConnectionUserRegistry is Ownable {
         uint256 fee = userFee > 0 ? userFee : defaultCommentFee;
 
         // Fee logic
-        if (messageComments[messageId].length == 0) {
-            // First comment on this message, fee is required
+        if (messageComments[messageId].length == 0 || msg.sender != originalMessage.author) {
+            // Non author's first comment on this message, fee is required
             require(msg.value >= fee, "comment fee low");
             if (fee > 0) {
-                uint256 authorShare = fee * 80 / 100;
-                uint256 receiverShare = fee - authorShare;
-
-                (bool authorSuccess, ) = payable(originalMessage.author).call{value: authorShare}("");
-                require(authorSuccess, "author transfer failed");
-
-                (bool receiverSuccess, ) = payable(feeReceiver).call{value: receiverShare}("");
-                require(receiverSuccess, "receiver transfer failed");
+                uint256 authorShare = msg.value * 80 / 100;
+                (bool success, ) = payable(originalMessage.author).call{value: authorShare}("");
+                require(success, "author share transfer failed");
             }
-        } else {
-            // Subsequent comments are free
+        } else { // Subsequent comments from the author are free
             require(msg.value == 0, "comment is free");
         }
 
@@ -376,8 +390,10 @@ contract ConnectionUserRegistry is Ownable {
             commentReplies[parentCommentId].push(commentId);
         }
 
-        // Commenting triggers content airdrop
-        _executeAirdrop(AirdropPool.Content, msg.value);
+        // 只有在支付了至少默认评论费时才触发内容空投
+        if (msg.value >= defaultCommentFee) {
+            _executeAirdrop(AirdropPool.Content, msg.value);
+        }
 
         emit CommentPosted(commentId, msg.sender, messageId, parentCommentId, content);
     }

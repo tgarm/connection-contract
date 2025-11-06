@@ -37,16 +37,17 @@ async function main() {
     const REG_FEE = hre.ethers.utils.parseEther("0.01");
     const MOD_FEE = hre.ethers.utils.parseEther("0.005");
     const DEFAULT_COMMENT_FEE = hre.ethers.utils.parseEther("0.001");
+    const DEFAULT_TIP_AMOUNT = hre.ethers.utils.parseEther("0.002"); // 新增：默认小费金额
 
     // --- 1. 部署 CT ---
     const CT = await hre.ethers.getContractFactory("ConnectionToken");
     const ctToken = await CT.deploy(initialSupply);
     await ctToken.deployed();
-    console.log("CT 已部署到:", ctToken.address);
+    console.log("✅ CT 已部署到:", ctToken.address);
 
     // --- 2. 部署 Registry ---
     const Registry = await hre.ethers.getContractFactory("ConnectionUserRegistry");
-    const registry = await Registry.deploy(ctToken.address, REG_FEE, MOD_FEE, DEFAULT_COMMENT_FEE);
+    const registry = await Registry.deploy(ctToken.address, REG_FEE, MOD_FEE, DEFAULT_COMMENT_FEE, DEFAULT_TIP_AMOUNT);
     await registry.deployed();
     console.log("Registry 已部署到:", registry.address);
 
@@ -65,7 +66,7 @@ async function main() {
     console.log("Content airdrop cycle started");
 
     // 4. 可选：设置 FeeReceiver
-    if (FEE_RECEIVER && ethers.utils.isAddress(FEE_RECEIVER)) {
+    if (FEE_RECEIVER && hre.ethers.utils.isAddress(FEE_RECEIVER)) {
         await (await registry.setFeeReceiver(FEE_RECEIVER)).wait();
         console.log(`FeeReceiver set to ${FEE_RECEIVER}`);
     }
@@ -97,7 +98,7 @@ async function main() {
 
                 await hre.run("verify:verify", {
                     address: registry.address,
-                    constructorArguments: [ctToken.address, REG_FEE, MOD_FEE, DEFAULT_COMMENT_FEE],
+                    constructorArguments: [ctToken.address, REG_FEE, MOD_FEE, DEFAULT_COMMENT_FEE, DEFAULT_TIP_AMOUNT],
                 });
                 console.log("✅ Registry 验证成功");
             } catch (e) {

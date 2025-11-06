@@ -77,6 +77,7 @@
         <el-tab-pane label="💬 消息墙" name="messages">
             <MessageBoard 
                 :isRegistered="isRegistered"
+                :defaultTipAmount="adminDefaultTipAmount"
                 :loadAllData="loadAllData"
                 :addressUsernameMap="addressUsernameMap"
             />
@@ -91,17 +92,20 @@
                 :contractCTBal="contractCTBal"
                 :userAirdropData="userAirdropData"
                 :contentAirdropData="contentAirdropData"
+                :tipAirdropData="tipAirdropData"
                 :totalRegisteredUsers="totalRegisteredUsers"
                 
                 :initialRegFee="adminRegFee"
                 :initialModFee="adminModFee"
                 :initialFeeReceiver="adminFeeReceiver"
                 :initialDefaultCommentFee="adminDefaultCommentFee"
+                :initialDefaultTipAmount="adminDefaultTipAmount"
                 :initialUserAirdropAmount="adminUserAirdropAmount"
                 :initialContentAirdropAmount="adminContentAirdropAmount"
                 
                 @withdrawFee="withdrawFee"
                 @setFees="setFees"
+                @setDefaultTipAmount="setDefaultTipAmount"
                 @setFeeReceiver="setFeeReceiver"
                 @startAirdropCycle="startAirdropCycle"
                 @setDefaultCommentFee="setDefaultCommentFee"
@@ -163,6 +167,7 @@ const adminRegFee = ref(0.01);
 const adminModFee = ref(0.01);
 const adminFeeReceiver = ref('');
 const adminDefaultCommentFee = ref(0.001);
+const adminDefaultTipAmount = ref(0.001);
 const adminUserAirdropAmount = ref(10000);
 const adminContentAirdropAmount = ref(100000);
 
@@ -175,6 +180,11 @@ const userAirdropData = ref({
     total: '0'
 });
 const contentAirdropData = ref({
+    distributed: '0',
+    remaining: '0',
+    total: '0'
+});
+const tipAirdropData = ref({
     distributed: '0',
     remaining: '0',
     total: '0'
@@ -249,18 +259,20 @@ const loadUserProfile = async () => {
     }
 
     // 2. 权限和费用
-    const [owner, receiver, regFee, modFee, defCommentFee] = await Promise.all([
+    const [owner, receiver, regFee, modFee, defCommentFee, defTipAmount] = await Promise.all([
       reg.owner(),
       reg.feeReceiver(),
       reg.registrationFee(),
       reg.modificationFee(),
-      reg.defaultCommentFee()
+      reg.defaultCommentFee(),
+      reg.defaultTipAmount()
     ]);
 
     isOwner.value = owner.toLowerCase() === walletAddress.value.toLowerCase();
     isFeeReceiver.value = receiver.toLowerCase() === walletAddress.value.toLowerCase();
     adminFeeReceiver.value = receiver;
 
+    adminDefaultTipAmount.value = Number(ethers.formatEther(defTipAmount));
     adminRegFee.value = Number(ethers.formatEther(regFee));
     adminModFee.value = Number(ethers.formatEther(modFee));
     adminDefaultCommentFee.value = Number(ethers.formatEther(defCommentFee));
@@ -278,11 +290,12 @@ const loadContractInfo = async () => {
     const reg = registry(currentNetworkKey.value);
 
     // 关键修正：totalRegisteredUsers 变为 totalUsers
-    const [nativeBal, ctBal, userCycle, contentCycle, totalUsersCount] = await Promise.all([
+    const [nativeBal, ctBal, userCycle, contentCycle, tipCycle, totalUsersCount] = await Promise.all([
       p.getBalance(addresses.registryAddress),
       ct.balanceOf(addresses.registryAddress),
       reg.airdropCycles(0), // AirdropPool.User
       reg.airdropCycles(1), // AirdropPool.Content
+      reg.airdropCycles(2), // AirdropPool.Tip
       reg.totalUsers() // ✅ 匹配合约 public totalUsers()
     ]);
 
@@ -298,6 +311,11 @@ const loadContractInfo = async () => {
     contentAirdropData.value.distributed = ethers.formatEther(contentCycle.distributedCT);
     const contentRemaining = contentCycle.cycleTotalCT > contentCycle.distributedCT ? contentCycle.cycleTotalCT - contentCycle.distributedCT : 0n;
     contentAirdropData.value.remaining = ethers.formatEther(contentRemaining);
+
+    tipAirdropData.value.total = ethers.formatEther(tipCycle.cycleTotalCT);
+    tipAirdropData.value.distributed = ethers.formatEther(tipCycle.distributedCT);
+    const tipRemaining = tipCycle.cycleTotalCT > tipCycle.distributedCT ? tipCycle.cycleTotalCT - tipCycle.distributedCT : 0n;
+    tipAirdropData.value.remaining = ethers.formatEther(tipRemaining);
 
     totalRegisteredUsers.value = Number(totalUsersCount); 
   } catch (e) {
@@ -442,6 +460,15 @@ const setDefaultCommentFee = async (fee) => {
     logMessage('默认评论费用更新成功', 'success');
     await loadAllData(); 
   } catch (e) { logMessage(`费用更新失败: ${e.message}`, 'error'); }
+};
+
+const setDefaultTipAmount = async (tip) => {
+  const reg = await getRegistryWithSigner(currentNetworkKey.value);
+  try {
+    await (await reg.setDefaultTipAmount(ethers.parseEther(tip.toString()))).wait();
+    logMessage('默认小费金额更新成功', 'success');
+    await loadAllData(); 
+  } catch (e) { logMessage(`小费金额更新失败: ${e.message}`, 'error'); }
 };
 
 

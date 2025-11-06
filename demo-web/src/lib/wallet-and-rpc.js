@@ -1,6 +1,6 @@
 // src/lib/wallet-and-rpc.js
 
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import { ethers } from 'ethers';
 import { logMessage } from './log-system';
 import { 
@@ -15,6 +15,10 @@ export const walletAddress = ref('');
 export const ai3Balance = ref('0.0 AI3');
 export const ctBalance = ref('0.0 CT');
 export const currentNetworkKey = ref(DEFAULT_NETWORK_KEY); // 初始化为部署网络
+
+// 导出计算属性
+export const currentNetwork = computed(() => NETWORKS[currentNetworkKey.value]);
+export const nativeSymbol = computed(() => currentNetwork.value?.nativeCurrency?.symbol || 'ETH');
 
 // =================================================================
 // 辅助函数
@@ -87,8 +91,7 @@ export const fetchBalances = async (address) => {
         
         // 1. 获取 Gas 币余额 (ETH/AI3)
         const ethWei = await provider.getBalance(address);
-        const symbol = NETWORKS[currentNetworkKey.value]?.nativeCurrency?.symbol || 'Gas';
-        ai3Balance.value = `${ethers.formatEther(ethWei)} ${symbol}`;
+        ai3Balance.value = `${ethers.formatEther(ethWei)} ${nativeSymbol.value}`;
 
         // 2. 获取 CT Token 余额
         const addresses = getContractAddresses(currentNetworkKey.value);
@@ -156,7 +159,7 @@ export const registerUser = async (username) => {
     if (username.length < 3) { logMessage('用户名长度必须至少为 3 个字符。', 'error'); return; }
 
     try {
-        logMessage(`正在注册用户 "${username}"，网络: ${NETWORKS[currentNetworkKey.value].name}...`, 'info');
+        logMessage(`正在注册用户 "${username}"，网络: ${currentNetwork.value.name}...`, 'info');
 
         const provider = new ethers.BrowserProvider(window.ethereum);
         const signer = await provider.getSigner();
@@ -164,10 +167,9 @@ export const registerUser = async (username) => {
         if (!addresses) { logMessage(`当前网络 ${currentNetworkKey.value} 未配置合约地址。`, 'error'); return; }
 
         const registryContract = new ethers.Contract(addresses.registryAddress, REGISTRY_ABI, signer);
-        const registrationFeeWei = ethers.parseEther("0.01"); 
-        const nativeSymbol = NETWORKS[currentNetworkKey.value].nativeCurrency.symbol;
+        const registrationFeeWei = ethers.parseEther("0.01");
         
-        logMessage(`正在发送注册交易 (支付 0.01 ${nativeSymbol})...`, 'tx');
+        logMessage(`正在发送注册交易 (支付 0.01 ${nativeSymbol.value})...`, 'tx');
 
         const tx = await registryContract.registerUsername(
             username,

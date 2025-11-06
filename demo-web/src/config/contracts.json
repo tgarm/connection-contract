@@ -2,8 +2,8 @@
   "defaultNetwork": "baseSepolia",
   "networks": {
     "baseSepolia": {
-      "registryAddress": "0xb61966606fA9BD77F5262c4C1F70D630F9BD8bB2",
-      "ctTokenAddress": "0xb9c23D7e786deD2A18140EdA2486C1f4DD3F70A5"
+      "registryAddress": "0x2D75bFf2E22F507130C4CAfc9Ab379fcD42B1A4D",
+      "ctTokenAddress": "0x2d274c4120910dEfEd4f48F3511D5ED184DdbA0c"
     }
   }
 }
